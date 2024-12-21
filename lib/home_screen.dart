@@ -14,6 +14,8 @@ class _HomePageState extends State<HomePage> {
   File? _image;
   String _result = ''; // Sunucudan gelen sonucu göstermek için
   List _predictions = []; // Tahmin sonuçları
+  double _totalPrice = 0.0; // Toplam fiyat
+  double _totalCalories = 0.0; // Toplam kalori
 
   // Fotoğraf yükleme işlemi
   Future<void> _pickImage() async {
@@ -53,8 +55,19 @@ class _HomePageState extends State<HomePage> {
         var data = jsonDecode(responseBody); // Sunucudan gelen veriyi çözümle
 
         if (data['predictions'] != null && data['predictions'].isNotEmpty) {
+          double totalPrice = 0.0;
+          double totalCalories = 0.0;
+
+          // Fiyatları ve kalorileri hesapla
+          for (var prediction in data['predictions']) {
+            totalPrice += prediction['price'];
+            totalCalories += prediction['calories'];
+          }
+
           setState(() {
             _predictions = data['predictions']; // Tahminleri ekrana yazdır
+            _totalPrice = totalPrice; // Toplam fiyatı ekle
+            _totalCalories = totalCalories; // Toplam kaloriyi ekle
             _result = 'Analiz başarıyla tamamlandı!';
           });
         } else {
@@ -119,45 +132,41 @@ class _HomePageState extends State<HomePage> {
                         return Card(
                           margin: EdgeInsets.symmetric(vertical: 8),
                           child: ListTile(
-                            title: Text('Etiket: ${prediction['label']}'),
-                            subtitle: Text(
-                                'Skor: ${prediction['confidence'].toStringAsFixed(2)}'),
+                            leading: Text(prediction['label']),
+                            title: Text('Tür: ${prediction['type']}'),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Kalori: ${prediction['calories']} kcal'),
+                                Text(
+                                    'Güven: ${prediction['confidence'].toStringAsFixed(2)}%'),
+                              ],
+                            ),
+                            trailing: Text('₺${prediction['price']}'),
                           ),
                         );
                       }).toList(),
                     )
-                  : (_result.isNotEmpty
-                      ? Text(
-                          'Hiçbir tahmin bulunamadı.',
-                          style: TextStyle(color: Colors.grey),
-                        )
-                      : Container()),
+                  : Container(),
+              SizedBox(height: 20),
+              _predictions.isNotEmpty
+                  ? Column(
+                      children: [
+                        Text(
+                          'Toplam Fiyat: ₺$_totalPrice',
+                          style: TextStyle(fontSize: 18),
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          'Toplam Kalori: ${_totalCalories.toStringAsFixed(2)} kcal',
+                          style: TextStyle(fontSize: 18),
+                        ),
+                      ],
+                    )
+                  : Container(),
             ],
           ),
         ),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        items: [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Ana Sayfa',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart),
-            label: 'Sonuçlar',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.settings),
-            label: 'İstatistikler',
-          ),
-        ],
-        onTap: (index) {
-          if (index == 1) {
-            // Sonuçlar ekranına yönlendirme
-          } else if (index == 2) {
-            // İstatistikler ekranına yönlendirme
-          }
-        },
       ),
     );
   }
