@@ -1,3 +1,4 @@
+
 import 'dart:convert'; // JSON işleme için
 import 'dart:io';
 
@@ -14,7 +15,8 @@ class _HomePageState extends State<HomePage> {
   File? _image;
   String _result = ''; // Sunucudan gelen sonucu göstermek için
   List _predictions = []; // Tahmin sonuçları
-  double _totalPrice = 0.0; // Toplam fiyat
+  double _normalTotalPrice = 0.0; // Toplam fiyat
+  double _specialControlPrice = 0.0; // Özel kontrol fiyatı
   double _totalCalories = 0.0; // Toplam kalori
 
   // Fotoğraf yükleme işlemi
@@ -25,12 +27,22 @@ class _HomePageState extends State<HomePage> {
     if (pickedFile != null) {
       setState(() {
         _image = File(pickedFile.path);
+        _resetCalculations(); // Yeni fotoğraf seçildiğinde hesaplamaları sıfırla
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Fotoğraf seçimi iptal edildi.')),
       );
     }
+  }
+
+  // Hesaplamaları sıfırlama
+  void _resetCalculations() {
+    _normalTotalPrice = 0.0;
+    _specialControlPrice = 0.0;
+    _totalCalories = 0.0;
+    _predictions = [];
+    _result = '';
   }
 
   // Fotoğrafı sunucuya gönderme
@@ -41,6 +53,11 @@ class _HomePageState extends State<HomePage> {
       );
       return;
     }
+
+    // Analiz başında hesaplamaları sıfırla
+    setState(() {
+      _resetCalculations();
+    });
 
     final uri = Uri.parse('http://192.168.1.35:5000/analyze'); // Sunucu URL'si
 
@@ -55,19 +72,43 @@ class _HomePageState extends State<HomePage> {
         var data = jsonDecode(responseBody); // Sunucudan gelen veriyi çözümle
 
         if (data['predictions'] != null && data['predictions'].isNotEmpty) {
-          double totalPrice = 0.0;
           double totalCalories = 0.0;
+          double newSpecialControlPrice = 0.0;
 
-          // Fiyatları ve kalorileri hesapla
+          // Normal yemeklerin fiyatlarını ve kalorilerini hesapla
           for (var prediction in data['predictions']) {
-            totalPrice += prediction['price'];
+            _normalTotalPrice += prediction['price'];
             totalCalories += prediction['calories'];
           }
 
+          // Özel kontrol fiyatını belirle
+          if (data['predictions'].any((p) => p['type'] == 'Ana Yemek') &&
+              data['predictions'].any((p) => p['type'] == 'Yardımcı Yemek') &&
+              data['predictions'].any(
+                  (p) => ['Tatlı', 'Meyve', 'İçecek'].contains(p['type']))) {
+            newSpecialControlPrice = 132;
+          } else if (data['predictions'].any((p) => p['type'] == 'Ana Yemek') &&
+              data['predictions'].any((p) => p['type'] == 'Yardımcı Yemek') &&
+              data['predictions'].any((p) => p['type'] == 'Su') &&
+              data['predictions'].any((p) => p['type'] == 'Ekmek')) {
+            newSpecialControlPrice = 106;
+          } else if (data['predictions']
+                  .any((p) => p['type'] == 'Etsiz Yemek') &&
+              data['predictions'].any((p) => p['type'] == 'Yardımcı Yemek') &&
+              data['predictions'].any((p) => p['type'] == 'Ekmek') &&
+              data['predictions'].any((p) => p['type'] == 'Su')) {
+            newSpecialControlPrice = 73;
+          } else if (data['predictions']
+                  .any((p) => p['type'] == 'Etsiz Yemek') &&
+              data['predictions'].any((p) => p['type'] == 'Ekmek') &&
+              data['predictions'].any((p) => p['type'] == 'Su')) {
+            newSpecialControlPrice = 53;
+          }
+
           setState(() {
-            _predictions = data['predictions']; // Tahminleri ekrana yazdır
-            _totalPrice = totalPrice; // Toplam fiyatı ekle
-            _totalCalories = totalCalories; // Toplam kaloriyi ekle
+            _predictions = data['predictions'];
+            _totalCalories = totalCalories;
+            _specialControlPrice = newSpecialControlPrice;
             _result = 'Analiz başarıyla tamamlandı!';
           });
         } else {
@@ -87,6 +128,15 @@ class _HomePageState extends State<HomePage> {
       });
       print('Hata: $e'); // Debug için konsola yazdır
     }
+  }
+
+  double _calculateSavings() {
+    if (_normalTotalPrice > 0 && _specialControlPrice > 0) {
+      return (_normalTotalPrice - _specialControlPrice) /
+          _normalTotalPrice *
+          100;
+    }
+    return 0.0; // Eğer normal toplam veya özel kontrol fiyatı sıfırsa tasarruf oranı sıfırdır.
   }
 
   @override
@@ -153,12 +203,22 @@ class _HomePageState extends State<HomePage> {
                   ? Column(
                       children: [
                         Text(
-                          'Toplam Fiyat: ₺$_totalPrice',
+                          'Normal Toplam Fiyat: ₺$_normalTotalPrice',
                           style: TextStyle(fontSize: 18),
                         ),
                         SizedBox(height: 10),
                         Text(
                           'Toplam Kalori: ${_totalCalories.toStringAsFixed(2)} kcal',
+                          style: TextStyle(fontSize: 18),
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          'Menü Fiyatı: ₺$_specialControlPrice',
+                          style: TextStyle(fontSize: 18),
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          'Tasarruf Oranı: ${_calculateSavings().toStringAsFixed(2)}%',
                           style: TextStyle(fontSize: 18),
                         ),
                       ],
