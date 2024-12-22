@@ -1,10 +1,10 @@
-
 import 'dart:convert'; // JSON işleme için
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 
 class HomePage extends StatefulWidget {
   @override
@@ -13,11 +13,18 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   File? _image;
-  String _result = ''; // Sunucudan gelen sonucu göstermek için
+  String _sonuc = ''; // Sunucudan gelen sonucu göstermek için
   List _predictions = []; // Tahmin sonuçları
-  double _normalTotalPrice = 0.0; // Toplam fiyat
-  double _specialControlPrice = 0.0; // Özel kontrol fiyatı
-  double _totalCalories = 0.0; // Toplam kalori
+  double _toplamFiyat = 0.0; // Toplam fiyat
+  double _menuFiyat = 0.0; // Özel kontrol fiyatı
+  double _toplamKalori = 0.0; // Toplam kalori
+  List<Map<String, dynamic>> _statistics = []; // İstatistikler listesi
+  int _currentIndex = 0; // Alt menüde seçili sekme
+
+  // Aylık toplam veriler
+  double _aylikToplamKalori = 0.0;
+  double _aylikToplamFiyat = 0.0;
+  double _aylikToplamTasarruf = 0.0;
 
   // Fotoğraf yükleme işlemi
   Future<void> _pickImage() async {
@@ -27,22 +34,16 @@ class _HomePageState extends State<HomePage> {
     if (pickedFile != null) {
       setState(() {
         _image = File(pickedFile.path);
-        _resetCalculations(); // Yeni fotoğraf seçildiğinde hesaplamaları sıfırla
+        _toplamFiyat = 0.0; // Yeni fotoğrafta fiyatları sıfırla
+        _menuFiyat = 0.0;
+        _toplamKalori = 0.0;
+        _predictions = [];
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Fotoğraf seçimi iptal edildi.')),
       );
     }
-  }
-
-  // Hesaplamaları sıfırlama
-  void _resetCalculations() {
-    _normalTotalPrice = 0.0;
-    _specialControlPrice = 0.0;
-    _totalCalories = 0.0;
-    _predictions = [];
-    _result = '';
   }
 
   // Fotoğrafı sunucuya gönderme
@@ -53,11 +54,6 @@ class _HomePageState extends State<HomePage> {
       );
       return;
     }
-
-    // Analiz başında hesaplamaları sıfırla
-    setState(() {
-      _resetCalculations();
-    });
 
     final uri = Uri.parse('http://192.168.1.35:5000/analyze'); // Sunucu URL'si
 
@@ -77,7 +73,7 @@ class _HomePageState extends State<HomePage> {
 
           // Normal yemeklerin fiyatlarını ve kalorilerini hesapla
           for (var prediction in data['predictions']) {
-            _normalTotalPrice += prediction['price'];
+            _toplamFiyat += prediction['price'];
             totalCalories += prediction['calories'];
           }
 
@@ -86,57 +82,99 @@ class _HomePageState extends State<HomePage> {
               data['predictions'].any((p) => p['type'] == 'Yardımcı Yemek') &&
               data['predictions'].any(
                   (p) => ['Tatlı', 'Meyve', 'İçecek'].contains(p['type']))) {
-            newSpecialControlPrice = 132;
+            newSpecialControlPrice =
+                132; // Özel kontrol sonucunda belirlenen fiyat
           } else if (data['predictions'].any((p) => p['type'] == 'Ana Yemek') &&
               data['predictions'].any((p) => p['type'] == 'Yardımcı Yemek') &&
               data['predictions'].any((p) => p['type'] == 'Su') &&
               data['predictions'].any((p) => p['type'] == 'Ekmek')) {
-            newSpecialControlPrice = 106;
+            newSpecialControlPrice =
+                106; // Ana yemek, yardımcı yemek, su, ekmek varsa
           } else if (data['predictions']
                   .any((p) => p['type'] == 'Etsiz Yemek') &&
               data['predictions'].any((p) => p['type'] == 'Yardımcı Yemek') &&
               data['predictions'].any((p) => p['type'] == 'Ekmek') &&
               data['predictions'].any((p) => p['type'] == 'Su')) {
-            newSpecialControlPrice = 73;
+            newSpecialControlPrice =
+                73; // Etsiz yemek, yardımcı yemek, su, ekmek varsa
           } else if (data['predictions']
                   .any((p) => p['type'] == 'Etsiz Yemek') &&
               data['predictions'].any((p) => p['type'] == 'Ekmek') &&
               data['predictions'].any((p) => p['type'] == 'Su')) {
-            newSpecialControlPrice = 53;
+            newSpecialControlPrice = 53; // Etsiz yemek, ekmek, su varsa
           }
 
           setState(() {
-            _predictions = data['predictions'];
-            _totalCalories = totalCalories;
-            _specialControlPrice = newSpecialControlPrice;
-            _result = 'Analiz başarıyla tamamlandı!';
+            _predictions = data['predictions']; // Tahminleri ekrana yazdır
+            _toplamKalori = totalCalories; // Toplam kaloriyi ekle
+            _menuFiyat = newSpecialControlPrice; // Yeni menü fiyatı
+            _sonuc = 'Analiz başarıyla tamamlandı!';
           });
         } else {
           setState(() {
             _predictions = [];
-            _result = 'Tahmin sonuçları bulunamadı.';
+            _sonuc = 'Tahmin sonuçları bulunamadı.';
           });
         }
       } else {
         setState(() {
-          _result = 'Sunucu hatası, kod: ${response.statusCode}';
+          _sonuc = 'Sunucu hatası, kod: ${response.statusCode}';
         });
       }
     } catch (e) {
       setState(() {
-        _result = 'Bağlantı hatası: $e';
+        _sonuc = 'Bağlantı hatası: $e';
       });
       print('Hata: $e'); // Debug için konsola yazdır
     }
   }
 
+  // Kaydet butonuna basıldığında oranları kaydetme
+  void _saveStatistics() {
+    double currentSavings = _calculateSavings();
+    DateTime currentTime =
+        DateTime.now().toUtc().add(Duration(hours: 3)); // Türkiye için GMT+3
+
+    setState(() {
+      // Yeni kaydı ekle
+      _statistics.add({
+        'totalPrice': _menuFiyat > 0 ? _menuFiyat : _toplamFiyat,
+        'calories': _toplamKalori,
+        'savings': currentSavings,
+        'timestamp': currentTime, // Kaydetme zamanı
+      });
+
+      // Aylık toplamları güncelle
+      _aylikToplamKalori += _toplamKalori;
+      _aylikToplamFiyat += _menuFiyat > 0 ? _menuFiyat : _toplamFiyat;
+
+      // Ağırlıklı tasarruf oranını hesapla
+      double toplamFiyat = 0.0;
+      double toplamTasarruf = 0.0;
+
+      for (var stat in _statistics) {
+        toplamFiyat += stat['totalPrice'];
+        toplamTasarruf += (stat['savings'] / 100) * stat['totalPrice'];
+      }
+
+      _aylikToplamTasarruf =
+          toplamFiyat > 0 ? (toplamTasarruf / toplamFiyat) * 100 : 0.0;
+    });
+  }
+
+  // Tasarruf oranını hesaplama
   double _calculateSavings() {
-    if (_normalTotalPrice > 0 && _specialControlPrice > 0) {
-      return (_normalTotalPrice - _specialControlPrice) /
-          _normalTotalPrice *
-          100;
+    if (_toplamFiyat > 0 && _menuFiyat > 0) {
+      return (_toplamFiyat - _menuFiyat) / _toplamFiyat * 100;
     }
-    return 0.0; // Eğer normal toplam veya özel kontrol fiyatı sıfırsa tasarruf oranı sıfırdır.
+    return 0.0;
+  }
+
+  // Alt sekme seçimi
+  void _onTabTapped(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
   }
 
   @override
@@ -145,88 +183,142 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: Text('TATS - Tepsi Analiz Sistemi'),
       ),
-      body: SingleChildScrollView(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _image == null
-                  ? Text('Henüz bir fotoğraf seçilmedi.')
-                  : Image.file(
-                      _image!,
-                      width: 300,
-                      height: 300,
-                      fit: BoxFit.cover,
-                    ),
-              SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _pickImage,
-                child: Text('Fotoğraf Yükle'),
-              ),
-              SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _sendImageToServer,
-                child: Text('Yemek Analizi Yap'),
-              ),
-              SizedBox(height: 20),
-              _result.isNotEmpty
-                  ? Text(
-                      'Sonuç: $_result',
-                      style: TextStyle(fontSize: 18),
-                    )
-                  : Container(),
-              SizedBox(height: 20),
-              _predictions.isNotEmpty
-                  ? Column(
-                      children: _predictions.map<Widget>((prediction) {
-                        return Card(
-                          margin: EdgeInsets.symmetric(vertical: 8),
-                          child: ListTile(
-                            leading: Text(prediction['label']),
-                            title: Text('Tür: ${prediction['type']}'),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('Kalori: ${prediction['calories']} kcal'),
-                                Text(
-                                    'Güven: ${prediction['confidence'].toStringAsFixed(2)}%'),
-                              ],
-                            ),
-                            trailing: Text('₺${prediction['price']}'),
+      body: _currentIndex == 0
+          ? SingleChildScrollView(
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _image == null
+                        ? Text('Henüz bir fotoğraf seçilmedi.')
+                        : Image.file(
+                            _image!,
+                            width: 300,
+                            height: 300,
+                            fit: BoxFit.cover,
                           ),
-                        );
-                      }).toList(),
-                    )
-                  : Container(),
-              SizedBox(height: 20),
-              _predictions.isNotEmpty
-                  ? Column(
-                      children: [
-                        Text(
-                          'Normal Toplam Fiyat: ₺$_normalTotalPrice',
-                          style: TextStyle(fontSize: 18),
+                    SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: _pickImage,
+                      child: Text('Fotoğraf Yükle'),
+                    ),
+                    SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: _sendImageToServer,
+                      child: Text('Yemek Analizi Yap'),
+                    ),
+                    SizedBox(height: 20),
+                    _sonuc.isNotEmpty
+                        ? Text(
+                            'Sonuç: $_sonuc',
+                            style: TextStyle(fontSize: 18),
+                          )
+                        : Container(),
+                    SizedBox(height: 20),
+                    _predictions.isNotEmpty
+                        ? Column(
+                            children: [
+                              ..._predictions.map<Widget>((prediction) {
+                                return Card(
+                                  margin: EdgeInsets.symmetric(vertical: 8),
+                                  child: ListTile(
+                                    leading: Text(prediction['label']),
+                                    title: Text('Tür: ${prediction['type']}'),
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                            'Kalori: ${prediction['calories']} kcal'),
+                                        Text(
+                                            'Güven: ${prediction['confidence'].toStringAsFixed(2)}%'),
+                                      ],
+                                    ),
+                                    trailing: Text('₺${prediction['price']}'),
+                                  ),
+                                );
+                              }),
+                              SizedBox(height: 10),
+                              Text(
+                                'Normal Toplam Fiyat: ₺$_toplamFiyat',
+                                style: TextStyle(fontSize: 18),
+                              ),
+                              Text(
+                                'Toplam Kalori: ${_toplamKalori.toStringAsFixed(2)} kcal',
+                                style: TextStyle(fontSize: 18),
+                              ),
+                              Text(
+                                'Menü Fiyatı: ₺$_menuFiyat',
+                                style: TextStyle(fontSize: 18),
+                              ),
+                              Text(
+                                'Tasarruf Oranı: ${_calculateSavings().toStringAsFixed(2)}%',
+                                style: TextStyle(fontSize: 18),
+                              ),
+                              ElevatedButton(
+                                onPressed: _saveStatistics,
+                                child: Text('Oranları Kaydet'),
+                              ),
+                            ],
+                          )
+                        : Container(),
+                  ],
+                ),
+              ),
+            )
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Aylık Toplam Kalori: ${_aylikToplamKalori.toStringAsFixed(2)} kcal',
+                        style: TextStyle(fontSize: 18),
+                      ),
+                      Text(
+                        'Aylık Toplam Fiyat: ₺${_aylikToplamFiyat.toStringAsFixed(2)}',
+                        style: TextStyle(fontSize: 18),
+                      ),
+                      Text(
+                        'Aylık Toplam Tasarruf: ${_aylikToplamTasarruf.toStringAsFixed(2)}%',
+                        style: TextStyle(fontSize: 18),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: _statistics.isEmpty
+                      ? Center(child: Text('Henüz kayıtlı istatistik yok.'))
+                      : ListView.builder(
+                          itemCount: _statistics.length,
+                          itemBuilder: (context, index) {
+                            var stat = _statistics[index];
+                            DateTime timestamp = stat['timestamp'];
+                            String formattedDate =
+                                DateFormat('yyyy-MM-dd').format(timestamp);
+                            String formattedTime =
+                                DateFormat('HH:mm:ss').format(timestamp);
+
+                            return ListTile(
+                              title: Text(
+                                  'Tasarruf: ${stat['savings'].toStringAsFixed(2)}%'),
+                              subtitle: Text(
+                                  'Fiyat: ₺${stat['totalPrice']}, Kalori: ${stat['calories']} kcal\nKaydedilen Zaman: $formattedDate $formattedTime'),
+                            );
+                          },
                         ),
-                        SizedBox(height: 10),
-                        Text(
-                          'Toplam Kalori: ${_totalCalories.toStringAsFixed(2)} kcal',
-                          style: TextStyle(fontSize: 18),
-                        ),
-                        SizedBox(height: 10),
-                        Text(
-                          'Menü Fiyatı: ₺$_specialControlPrice',
-                          style: TextStyle(fontSize: 18),
-                        ),
-                        SizedBox(height: 10),
-                        Text(
-                          'Tasarruf Oranı: ${_calculateSavings().toStringAsFixed(2)}%',
-                          style: TextStyle(fontSize: 18),
-                        ),
-                      ],
-                    )
-                  : Container(),
-            ],
-          ),
-        ),
+                ),
+              ],
+            ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: _onTabTapped,
+        items: [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Anasayfa'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.bar_chart), label: 'İstatistikler'),
+        ],
       ),
     );
   }
